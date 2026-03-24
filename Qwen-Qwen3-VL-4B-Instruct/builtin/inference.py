@@ -123,7 +123,7 @@ def generate_response(model, processor, tokenizer, tokenizer_stream, prompt, ima
 
     # Generate
     generator = og.Generator(model, params)
-    #set_active_adapter("gsm8k", dll_name="C:/wxj/olive-recipes/Qwen-Qwen3-VL-4B-Instruct/builtin/onnxruntime_providers_ryzenai.dll")
+    set_active_adapter("gsm8k", dll_name="onnxruntime_providers_ryzenai.dll")
     get_peak_memory_usage("after generator")
 
     first_token = False
