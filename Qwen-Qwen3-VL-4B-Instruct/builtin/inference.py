@@ -1,11 +1,29 @@
 import argparse
 import json
+import time
+import os
+import psutil
 import onnxruntime_genai as og
 
+from ryzenai_lora_inferface import (
+    set_active_adapter,
+    set_active_adapter_from_buffer
+)
+
+import onnx
+import onnxruntime as ort
+print(f"onnxruntime version: {ort.__version__} ort version:{onnx.__version__}")
+
+def get_peak_memory_usage(label):
+    process = psutil.Process(os.getpid())
+    cur_mem = process.memory_info().rss
+    peak_memory = process.memory_info().peak_wset
+    print(label + " cur mem:", cur_mem/1024/1024/1024, "GB")
+    print(label + " peak mem:", peak_memory/1024/1024/1024, "GB")
 
 def main():
     parser = argparse.ArgumentParser(
-        description="ONNX Runtime GenAI inference for Qwen3-VL"
+        description="ONNX Runtime GenAI inference for Qwen3-VL-4B"
     )
 
     parser.add_argument(
@@ -27,6 +45,12 @@ def main():
         help="Text prompt"
     )
     parser.add_argument(
+        "--prompt-file",
+        type=str,
+        default=None,
+        help="Text prompt file"
+    )
+    parser.add_argument(
         "--interactive",
         action="store_true",
         help="Run in interactive mode"
@@ -40,11 +64,16 @@ def main():
     processor = model.create_multimodal_processor()
     tokenizer = og.Tokenizer(model)
     tokenizer_stream = processor.create_stream()
+    get_peak_memory_usage("after load model")
 
     if args.interactive:
         interactive_mode(model, processor, tokenizer, tokenizer_stream, args)
     elif args.prompt:
         generate_response(model, processor, tokenizer, tokenizer_stream, args.prompt, args.image)
+    elif args.prompt_file:
+        with open(args.prompt_file, 'r') as file:
+            prompt = file.read()
+        generate_response(model, processor, tokenizer, tokenizer_stream, prompt, args.image)
     else:
         print("Please provide --prompt or use --interactive mode")
         parser.print_help()
@@ -84,7 +113,9 @@ def generate_response(model, processor, tokenizer, tokenizer_stream, prompt, ima
     print("\nGenerating response...")
 
     # Process inputs
+    print("full_prompt:", len(full_prompt))
     inputs = processor(full_prompt, images=images)
+    print("input_ids len:", inputs['input_ids'].shape()[1])
 
     # Set up generation parameters
     params = og.GeneratorParams(model)
@@ -92,15 +123,33 @@ def generate_response(model, processor, tokenizer, tokenizer_stream, prompt, ima
 
     # Generate
     generator = og.Generator(model, params)
+    #set_active_adapter("gsm8k", dll_name="C:/wxj/olive-recipes/Qwen-Qwen3-VL-4B-Instruct/builtin/onnxruntime_providers_ryzenai.dll")
+    get_peak_memory_usage("after generator")
+
+    first_token = False
+    start_time = time.time()
     generator.set_inputs(inputs)
+    tokens = 0
 
     print("\nResponse: ", end="", flush=True)
+
     while not generator.is_done():
         generator.generate_next_token()
+        tokens += 1
         new_token = generator.get_next_tokens()[0]
+        if not first_token:
+            TTFT = time.time() - start_time
+            # print(f"First token generated at: {time.time()}")
+            first_token = True
         print(tokenizer_stream.decode(new_token), end="", flush=True)
     print()
+    end_time = time.time()
+    print("\nTTFT: {:.2f} seconds".format(TTFT))
+    print("TPS: {:.2f} tokens/second".format(tokens / (end_time - start_time - TTFT)))
+    print("\n")
+    get_peak_memory_usage("before del generator")
     del generator
+    get_peak_memory_usage("after del generator")
 
 
 def interactive_mode(model, processor, tokenizer, tokenizer_stream, args):
