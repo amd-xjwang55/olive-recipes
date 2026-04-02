@@ -147,7 +147,7 @@ def run_onnx(model, processor, tokenizer, pil_image: Image.Image, messages_json:
         # with larger images after the smart_resize fix (more patches = more vision tokens).
         # We only need 1-2 generated tokens (a digit), so 1500 provides ample headroom.
         # Use greedy decoding (do_sample=False) for deterministic results.
-        params.set_search_options(max_length=2000, do_sample=False)
+        params.set_search_options(max_length=4096, do_sample=False)
 
         generator = og.Generator(model, params)
         generator.set_inputs(inputs)
