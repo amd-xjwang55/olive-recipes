@@ -55,6 +55,18 @@ def main():
         action="store_true",
         help="Run in interactive mode"
     )
+    parser.add_argument(
+        "--lora",
+        type=str,
+        default="base",
+        help="Lora name"
+    )
+    parser.add_argument(
+        "--max-length",
+        type=int,
+        default=4096,
+        help="max context cache length"
+    )
 
     args = parser.parse_args()
 
@@ -69,17 +81,17 @@ def main():
     if args.interactive:
         interactive_mode(model, processor, tokenizer, tokenizer_stream, args)
     elif args.prompt:
-        generate_response(model, processor, tokenizer, tokenizer_stream, args.prompt, args.image)
+        generate_response(model, processor, tokenizer, tokenizer_stream, args.prompt, args.image, args)
     elif args.prompt_file:
         with open(args.prompt_file, 'r') as file:
             prompt = file.read()
-        generate_response(model, processor, tokenizer, tokenizer_stream, prompt, args.image)
+        generate_response(model, processor, tokenizer, tokenizer_stream, prompt, args.image, args)
     else:
         print("Please provide --prompt or use --interactive mode")
         parser.print_help()
 
 
-def generate_response(model, processor, tokenizer, tokenizer_stream, prompt, image_path):
+def generate_response(model, processor, tokenizer, tokenizer_stream, prompt, image_path, args):
     # Build messages for chat template
     images = None
     if image_path:
@@ -119,11 +131,11 @@ def generate_response(model, processor, tokenizer, tokenizer_stream, prompt, ima
 
     # Set up generation parameters
     params = og.GeneratorParams(model)
-    params.set_search_options(max_length=4096)
+    params.set_search_options(max_length=args.max_length)
 
     # Generate
     generator = og.Generator(model, params)
-    set_active_adapter("gsm8k", dll_name="onnxruntime_providers_ryzenai.dll")
+    set_active_adapter(args.lora, dll_name="onnxruntime_providers_ryzenai.dll")
     get_peak_memory_usage("after generator")
 
     first_token = False
