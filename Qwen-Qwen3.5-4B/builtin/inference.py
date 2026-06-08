@@ -13,11 +13,21 @@ import argparse
 import json
 import os
 import time
-
+import psutil
 import onnxruntime_genai as og
 
+from ryzenai_lora_inferface import (
+    set_active_adapter,
+    set_active_adapter_from_buffer
+)
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tiff"}
 
+def get_peak_memory_usage(label):
+    process = psutil.Process(os.getpid())
+    cur_mem = process.memory_info().rss
+    peak_memory = process.memory_info().peak_wset
+    print(label + " cur mem:", cur_mem/1024/1024/1024, "GB")
+    print(label + " peak mem:", peak_memory/1024/1024/1024, "GB")
 
 def main():
     parser = argparse.ArgumentParser(
@@ -42,15 +52,27 @@ def main():
         help="Text prompt",
     )
     parser.add_argument(
-        "--max_length",
+        "--max-length",
         type=int,
         default=4096,
         help="Maximum total tokens (prompt + generated)",
     )
     parser.add_argument(
+        "--prompt-file",
+        type=str,
+        default=None,
+        help="Text prompt file"
+    )
+    parser.add_argument(
         "--interactive",
         action="store_true",
         help="Run in interactive mode",
+    )
+    parser.add_argument(
+        "--lora",
+        type=str,
+        default="base",
+        help="Lora name"
     )
     parser.add_argument(
         "--benchmark",
@@ -82,19 +104,24 @@ def main():
     processor = model.create_multimodal_processor()
     tokenizer = og.Tokenizer(model)
     tokenizer_stream = processor.create_stream()
+    get_peak_memory_usage("after load model")
 
     if args.benchmark:
         benchmark_folder(model, processor, tokenizer, tokenizer_stream, args)
     elif args.interactive:
         interactive_mode(model, processor, tokenizer, tokenizer_stream, args)
     elif args.prompt:
-        generate_response(model, processor, tokenizer, tokenizer_stream, args.prompt, args.image, args.max_length)
+        generate_response(model, processor, tokenizer, tokenizer_stream, args.prompt, args.image, args)
+    elif args.prompt_file:
+        with open(args.prompt_file, 'r') as file:
+            prompt = file.read()
+        generate_response(model, processor, tokenizer, tokenizer_stream, prompt, args.image, args)
     else:
         print("Please provide --prompt, --interactive, or --benchmark <folder>")
         parser.print_help()
 
 
-def generate_response(model, processor, tokenizer, tokenizer_stream, prompt, image_path, max_length=4096, quiet=False):
+def generate_response(model, processor, tokenizer, tokenizer_stream, prompt, image_path, args, quiet=False):
     """Run a single generation. Returns (text, token_count, ttft, tps)."""
     t_preproc_start = time.perf_counter()
     images = None
@@ -127,12 +154,17 @@ def generate_response(model, processor, tokenizer, tokenizer_stream, prompt, ima
             print(f"Image: {image_path}")
         print("\nGenerating response...")
 
+    # Process inputs
+    print("full_prompt:", len(full_prompt))
     inputs = processor(full_prompt, images=images)
+    print("input_ids len:", inputs['input_ids'].shape()[1])
 
     params = og.GeneratorParams(model)
-    params.set_search_options(max_length=max_length)
+    params.set_search_options(max_length=args.max_length)
 
     generator = og.Generator(model, params)
+    set_active_adapter(args.lora, dll_name="onnxruntime_providers_ryzenai.dll")
+    get_peak_memory_usage("after generator")
     generator.set_inputs(inputs)
     t_preproc = time.perf_counter() - t_preproc_start
     t_start = time.perf_counter()
@@ -171,6 +203,7 @@ def generate_response(model, processor, tokenizer, tokenizer_stream, prompt, ima
         print(f"  Decode TPS       : {tps:.1f} tokens/sec")
         print(f"  Model time       : {t_model:.2f} s")
         print(f"  End-to-end time  : {t_preproc + t_model:.2f} s")
+        get_peak_memory_usage("  final")
 
     return text, token_count, ttft or 0, tps
 
